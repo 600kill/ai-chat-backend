@@ -1,0 +1,47 @@
+# 定义所有服务列表
+services:
+  # 定义数据库服务，服务名自定义为db
+  db:
+    # 指定拉取的镜像地址与版本，带pgvector向量插件的postgres16镜像
+    image: docker.1ms.run/pgvector/pgvector:pg16
+    # 适配amd64架构电脑，主流电脑都是这个架构
+    platform: linux/amd64
+    # 容器内部环境变量，给数据库初始化配置
+    environment:
+      # 初始化创建的数据库名称
+      - POSTGRES_DB=${POSTGRES_DB}
+      # 数据库登录用户名
+      - POSTGRES_USER=${POSTGRES_USER}
+      # 数据库登录密码
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    # 端口映射：本机端口:容器内部端口，外部程序通过本机5432连接数据库
+    ports:
+      - "5432:5432"
+    # 数据卷挂载，把容器内数据库数据持久化存到本地，删容器数据不丢失
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # 健康检查配置，用来判断数据库是否完全启动就绪
+    healthcheck:
+      # 执行检测命令，校验数据库能否正常连接
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      # 每隔10秒检测一次状态
+      interval: 10s
+      # 单次检测超时时间，5秒没响应判定失败
+      timeout: 5s
+      # 连续重试5次失败，判定服务异常
+      retries: 5
+    # 容器退出、服务器重启时，自动重启数据库容器
+    restart: always
+    # 加入指定docker网桥网络，方便同网络内其他容器互通访问
+    networks:
+      - monitoring
+
+# 自定义docker网络配置
+networks:
+  monitoring:
+    # 网桥模式网络，容器之间可互通，也可对外访问
+    driver: bridge
+
+# 声明数据卷，统一管理持久化存储目录
+volumes:
+  postgres-data:
