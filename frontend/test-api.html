@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta content="width=device-width, initial-scale=1.0" name="viewport">
+    <title>AI Chatbot - API 测试工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 min-h-screen p-8">
+    <div class="max-w-4xl mx-auto">
+        <div class="bg-white rounded-xl shadow-lg p-6 mb-6">
+            <h1 class="text-2xl font-bold text-gray-800 mb-4">
+                <i class="fa fa-wrench mr-2"></i>API 连接测试工具
+            </h1>
+            
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">API 地址</label>
+                <input class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" id="apiUrl" type="text"
+                    value="http://localhost:8000">
+            </div>
+            
+            <button class="px-6 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors" onclick="testHealth()">
+                <i class="fa fa-heartbeat mr-2"></i>测试健康检查
+            </button>
+        </div>
+
+        <div class="space-y-4" id="testResults"></div>
+
+        <!-- 测试1: 注册 -->
+        <div class="bg-white rounded-xl shadow-lg p-6">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">1. 注册用户</h2>
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <input class="px-4 py-2 border border-gray-300 rounded-lg" id="regEmail" placeholder="邮箱" type="email"
+                    value="test@example.com">
+                <input class="px-4 py-2 border border-gray-300 rounded-lg" id="regUsername" placeholder="用户名（可选）" type="text"
+                    value="测试用户">
+                <input class="px-4 py-2 border border-gray-300 rounded-lg col-span-2" id="regPassword" placeholder="密码" type="password"
+                    value="Test1234!">
+            </div>
+            <button class="px-6 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors" onclick="testRegister()">
+                <i class="fa fa-user-plus mr-2"></i>注册
+            </button>
+        </div>
+
+        <!-- 测试2: 登录 -->
+        <div class="bg-white rounded-xl shadow-lg p-6">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">2. 登录</h2>
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <input class="px-4 py-2 border border-gray-300 rounded-lg" id="loginEmail" placeholder="邮箱" type="email"
+                    value="test@example.com">
+                <input class="px-4 py-2 border border-gray-300 rounded-lg" id="loginPassword" placeholder="密码" type="password"
+                    value="Test1234!">
+            </div>
+            <button class="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors" onclick="testLogin()">
+                <i class="fa fa-sign-in mr-2"></i>登录
+            </button>
+        </div>
+
+        <!-- 测试3: 创建会话 -->
+        <div class="bg-white rounded-xl shadow-lg p-6">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">3. 创建会话</h2>
+            <button class="px-6 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled id="btnCreateSession"
+                onclick="testCreateSession()">
+                <i class="fa fa-plus mr-2"></i>创建会话
+            </button>
+            <p class="text-sm text-gray-500 mt-2">需要先登录才能创建会话</p>
+        </div>
+
+        <!-- 测试4: 发送消息 -->
+        <div class="bg-white rounded-xl shadow-lg p-6">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">4. 发送消息</h2>
+            <div class="mb-4">
+                <textarea class="w-full px-4 py-2 border border-gray-300 rounded-lg resize-none" id="chatMessage" placeholder="输入消息..."
+                    rows="3">你好，请介绍一下你自己</textarea>
+            </div>
+            <div class="flex gap-4 mb-4">
+                <label class="flex items-center gap-2">
+                    <input checked class="rounded text-indigo-500" id="useStream" type="checkbox">
+                    <span>使用流式响应</span>
+                </label>
+            </div>
+            <button class="px-6 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled id="btnChat"
+                onclick="testChat()">
+                <i class="fa fa-paper-plane mr-2"></i>发送消息
+            </button>
+        </div>
+
+        <!-- 测试结果 -->
+        <div class="bg-white rounded-xl shadow-lg p-6 hidden" id="chatResult">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">
+                <i class="fa fa-comments mr-2"></i>聊天结果
+            </h2>
+            <div class="space-y-4 max-h-96 overflow-y-auto" id="chatMessages"></div>
+        </div>
+
+        <!-- 会话信息 -->
+        <div class="bg-white rounded-xl shadow-lg p-6 hidden" id="sessionInfo">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">
+                <i class="fa fa-info-circle mr-2"></i>当前会话
+            </h2>
+            <p class="text-gray-600"><strong>会话ID:</strong> <span id="currentSessionId"></span></p>
+            <p class="text-gray-600"><strong>会话令牌:</strong> <code class="bg-gray-100 px-2 py-1 rounded text-sm" id="currentSessionToken"></code></p>
+        </div>
+    </div>
+
+    <script>
+        // 全局状态
+        let apiUrl = 'http://localhost:8000';
+        let authToken = null;
+        let sessionToken = null;
+        let sessionId = null;
+
+        // 更新 API 地址
+        document.getElementById('apiUrl').addEventListener('change', (e) => {
+            apiUrl = e.target.value;
+        });
+
+        // 显示结果
+        function showResult(title, content, isError = false) {
+            const results = document.getElementById('testResults');
+            const div = document.createElement('div');
+            div.className = `bg-white rounded-xl shadow-lg p-4 border-l-4 ${isError ? 'border-red-500' : 'border-green-500'}`;
+            div.innerHTML = `
+                <h3 class="font-bold text-gray-800">${title}</h3>
+                <pre class="mt-2 text-sm text-gray-600 bg-gray-50 p-2 rounded overflow-x-auto">${JSON.stringify(content, null, 2)}</pre>
+            `;
+            results.prepend(div);
+        }
+
+        // 测试健康检查
+        async function testHealth() {
+            try {
+                const response = await fetch(`${apiUrl}/health`);
+                const data = await response.json();
+                showResult('健康检查', data);
+            } catch (error) {
+                showResult('健康检查失败', { error: error.message }, true);
+            }
+        }
+
+        // 测试注册
+        async function testRegister() {
+            const email = document.getElementById('regEmail').value;
+            const password = document.getElementById('regPassword').value;
+            const username = document.getElementById('regUsername').value;
+
+            try {
+                const response = await fetch(`${apiUrl}/api/v1/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password, username: username || undefined })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('注册成功', data);
+                    authToken = data.token || data.access_token;
+                    document.getElementById('loginEmail').value = email;
+                    document.getElementById('loginPassword').value = password;
+                } else {
+                    showResult('注册失败', data, true);
+                }
+            } catch (error) {
+                showResult('注册请求失败', { error: error.message }, true);
+            }
+        }
+
+        // 测试登录
+        async function testLogin() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+
+            try {
+                const formData = new URLSearchParams({
+                    email,
+                    password,
+                    grant_type: 'password'
+                });
+
+                const response = await fetch(`${apiUrl}/api/v1/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showResult('登录成功', data);
+                    authToken = data.access_token;
+                    document.getElementById('btnCreateSession').disabled = false;
+                    document.getElementById('btnChat').disabled = false;
+                } else {
+                    showResult('登录失败', data, true);
+                }
+            } catch (error) {
+                showResult('登录请求失败', { error: error.message }, true);
+            }
+        }
+
+        // 测试创建会话
+        async function testCreateSession() {
+            try {
+                const response = await fetch(`${apiUrl}/api/v1/auth/session`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showResult('创建会话成功', data);
+                    sessionId = data.session_id;
+                    sessionToken = data.token.access_token;
+                    
+                    // 显示会话信息
+                    document.getElementById('sessionInfo').classList.remove('hidden');
+                    document.getElementById('currentSessionId').textContent = sessionId;
+                    document.getElementById('currentSessionToken').textContent = sessionToken;
+                } else {
+                    showResult('创建会话失败', data, true);
+                }
+            } catch (error) {
+                showResult('创建会话请求失败', { error: error.message }, true);
+            }
+        }
+
+        // 测试聊天
+        async function testChat() {
+            const message = document.getElementById('chatMessage').value;
+            const useStream = document.getElementById('useStream').checked;
+
+            if (!sessionToken) {
+                alert('请先创建会话');
+                return;
+            }
+
+            document.getElementById('chatResult').classList.remove('hidden');
+            const chatMessages = document.getElementById('chatMessages');
+            chatMessages.innerHTML = '';
+
+            // 添加用户消息
+            chatMessages.innerHTML += `
+                <div class="flex items-start gap-3">
+                    <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-indigo-600 flex items-center justify-center">
+                        <i class="fa fa-user text-white"></i>
+                    </div>
+                    <div class="flex-1">
+                        <div class="bg-indigo-500 text-white p-4 rounded-xl rounded-tr-sm">
+                            <p class="text-sm">${message}</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            try {
+                if (useStream) {
+                    // 流式响应
+                    const response = await fetch(`${apiUrl}/api/v1/chatbot/chat/stream`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${sessionToken}`
+                        },
+                        body: JSON.stringify({ 
+                            messages: [{ role: 'user', content: message }] 
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.detail || '请求失败');
+                    }
+
+                    // 添加 AI 消息占位
+                    chatMessages.innerHTML += `
+                        <div class="flex items-start gap-3" id="aiMessage">
+                            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center">
+                                <i class="fa fa-robot text-white"></i>
+                            </div>
+                            <div class="flex-1">
+                                <div class="bg-white border border-gray-200 p-4 rounded-xl rounded-tl-sm shadow-sm">
+                                    <p class="text-sm text-gray-800" id="aiContent"></p>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder('utf-8');
+                    const aiContent = document.getElementById('aiContent');
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        const chunk = decoder.decode(value);
+                        const lines = chunk.split('\n\n');
+
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const data = JSON.parse(line.slice(6));
+                                    if (data.content) {
+                                        aiContent.textContent += data.content;
+                                        // 滚动到底部
+                                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                                    }
+                                } catch {}
+                            }
+                        }
+                    }
+                } else {
+                    // 非流式响应
+                    const response = await fetch(`${apiUrl}/api/v1/chatbot/chat`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${sessionToken}`
+                        },
+                        body: JSON.stringify({ 
+                            messages: [{ role: 'user', content: message }] 
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.detail || '请求失败');
+                    }
+
+                    const data = await response.json();
+                    const aiResponse = data.messages[data.messages.length - 1].content;
+
+                    chatMessages.innerHTML += `
+                        <div class="flex items-start gap-3">
+                            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center">
+                                <i class="fa fa-robot text-white"></i>
+                            </div>
+                            <div class="flex-1">
+                                <div class="bg-white border border-gray-200 p-4 rounded-xl rounded-tl-sm shadow-sm">
+                                    <p class="text-sm text-gray-800">${aiResponse}</p>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                showResult('聊天成功', { message }, false);
+            } catch (error) {
+                showResult('聊天失败', { error: error.message }, true);
+                chatMessages.innerHTML += `
+                    <div class="bg-red-50 border border-red-200 p-4 rounded-lg">
+                        <p class="text-red-600">错误: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        // 页面加载时自动测试健康检查
+        window.addEventListener('load', () => {
+            setTimeout(testHealth, 500);
+        });
+    </script>
+</body>
+</html>

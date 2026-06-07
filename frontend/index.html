@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta content="width=device-width, initial-scale=1.0" name="viewport">
+    <title>AI Chatbot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .scrollbar::-webkit-scrollbar { width: 5px; }
+        .scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .dot-typing { animation: dotPulse 1.4s infinite both; }
+        .dot-typing:nth-child(2) { animation-delay: 0.16s; }
+        .dot-typing:nth-child(3) { animation-delay: 0.32s; }
+        @keyframes dotPulse { 0%, 80%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
+        .fade-enter-active { animation: fadeIn 0.2s; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        textarea { field-sizing: content; }
+        /* Markdown styles */
+        .markdown-body p { margin-bottom: 0.5em; }
+        .markdown-body p:last-child { margin-bottom: 0; }
+        .markdown-body pre { background: #1e293b; color: #e2e8f0; padding: 0.75rem; border-radius: 0.5rem; overflow-x: auto; margin: 0.5em 0; }
+        .markdown-body code { background: #f1f5f9; padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-size: 0.875em; }
+        .markdown-body pre code { background: transparent; padding: 0; }
+        .markdown-body ul, .markdown-body ol { margin-left: 1.25rem; margin-bottom: 0.5em; }
+        .markdown-body li { margin-bottom: 0.25em; }
+        .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 { font-weight: 600; margin: 0.75em 0 0.5em; }
+        .markdown-body h1 { font-size: 1.25em; }
+        .markdown-body h2 { font-size: 1.125em; }
+        .markdown-body h3 { font-size: 1em; }
+        .markdown-body blockquote { border-left: 3px solid #cbd5e1; padding-left: 0.75rem; color: #64748b; margin: 0.5em 0; }
+        .markdown-body table { border-collapse: collapse; width: 100%; margin: 0.5em 0; }
+        .markdown-body th, .markdown-body td { border: 1px solid #e2e8f0; padding: 0.375rem 0.5rem; }
+        .markdown-body th { background: #f8fafc; }
+        /* Mobile sidebar */
+        @media (max-width: 768px) {
+            .sidebar-mobile { position: fixed; left: 0; top: 0; bottom: 0; z-index: 40; transform: translateX(-100%); transition: transform 0.3s; }
+            .sidebar-mobile.open { transform: translateX(0); }
+            .sidebar-overlay { display: none; }
+            .sidebar-overlay.show { display: block; }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 h-screen overflow-hidden">
+    <div class="h-full flex flex-col" id="app">
+
+        <!-- ====== 顶部导航 ====== -->
+        <header class="bg-white border-b px-4 py-3 flex items-center justify-between flex-shrink-0 z-30">
+            <div class="flex items-center gap-3">
+                <button @click="toggleSidebar" class="md:hidden p-1.5 hover:bg-gray-100 rounded-lg">
+                    <i class="fa fa-bars text-gray-500"></i>
+                </button>
+                <div class="w-9 h-9 rounded-lg bg-indigo-500 flex items-center justify-center">
+                    <i class="fa fa-robot text-white"></i>
+                </div>
+                <h1 class="text-lg font-bold text-gray-800">AI Chatbot</h1>
+            </div>
+            <div class="flex items-center gap-3">
+                <button :disabled="!isLoggedIn" @click="createSession"
+                    class="px-3 py-1.5 bg-indigo-500 text-white text-sm rounded-lg hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5">
+                    <i class="fa fa-plus text-xs"></i><span class="hidden sm:inline">新建会话</span>
+                </button>
+                <template v-if="isLoggedIn">
+                    <span class="text-sm text-gray-500 hidden sm:inline">{{ userEmail }}</span>
+                    <button @click="logout" class="text-sm text-gray-400 hover:text-red-500 px-2">
+                        <i class="fa fa-sign-out"></i>
+                    </button>
+                </template>
+                <button @click="openAuth('login')" class="px-3 py-1.5 bg-indigo-500 text-white text-sm rounded-lg hover:bg-indigo-600" v-else>
+                    登录
+                </button>
+                <button @click="showSettings = true" class="p-1.5 hover:bg-gray-100 rounded-lg">
+                    <i class="fa fa-cog text-gray-500"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- ====== 主体 ====== -->
+        <div class="flex-1 flex overflow-hidden relative">
+            <!-- 移动端遮罩 -->
+            <div @click="sidebarOpen = false" class="sidebar-overlay show md:hidden fixed inset-0 bg-black/30 z-30" v-if="sidebarOpen"></div>
+
+            <!-- 左侧会话列表 -->
+            <aside :class="['w-64 bg-white border-r flex flex-col flex-shrink-0 sidebar-mobile md:relative md:transform-none z-40', sidebarOpen ? 'open' : '']">
+                <div class="flex-1 overflow-y-auto p-2 space-y-1 scrollbar">
+                    <div class="text-center py-16 text-gray-400" v-if="sessions.length === 0">
+                        <i class="fa fa-comments-o text-3xl mb-2 opacity-40"></i>
+                        <p class="text-sm">暂无会话</p>
+                    </div>
+                    <div :class="['group flex items-center justify-between p-2.5 rounded-lg cursor-pointer text-sm transition',
+                            currentSessionId === s.session_id ? 'bg-indigo-50 border border-indigo-200' : 'hover:bg-gray-50 border border-transparent']" :key="s.session_id"
+                        @click="switchSession(s); sidebarOpen = false"
+                        v-for="s in sessions">
+                        <div class="flex items-center gap-2 flex-1 min-w-0">
+                            <i class="fa fa-comment-o text-gray-400 text-xs"></i>
+                            <span class="truncate text-gray-700">{{ s.name || '新会话' }}</span>
+                        </div>
+                        <div class="flex items-center gap-1 flex-shrink-0">
+                            <button @click.stop="startRename(s)" class="w-7 h-7 flex items-center justify-center hover:bg-indigo-100 rounded transition-colors" title="重命名">
+                                <i class="fa fa-pencil text-gray-400 hover:text-indigo-500 text-xs"></i>
+                            </button>
+                            <button @click.stop="deleteSession(s)" class="w-7 h-7 flex items-center justify-center hover:bg-red-100 rounded transition-colors" title="删除会话">
+                                <i class="fa fa-trash text-gray-400 hover:text-red-600 text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="p-3 border-t text-xs text-gray-400 text-center">
+                    共 {{ sessions.length }} 个会话
+                </div>
+            </aside>
+
+            <!-- 右侧聊天区 -->
+            <main class="flex-1 flex flex-col overflow-hidden bg-gray-50">
+
+                <!-- 无会话时 -->
+                <div class="flex-1 flex flex-col items-center justify-center text-gray-400 px-4" v-if="!currentSessionId">
+                    <div class="w-20 h-20 rounded-full bg-indigo-100 flex items-center justify-center mb-4">
+                        <i class="fa fa-comments text-3xl text-indigo-400"></i>
+                    </div>
+                    <h3 class="text-lg font-semibold text-gray-600 mb-1">欢迎使用 AI Chatbot</h3>
+                    <p class="text-sm mb-4 text-center">选择一个会话或创建新会话开始聊天</p>
+                    <button :disabled="!isLoggedIn" @click="createSession"
+                        class="px-5 py-2.5 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed text-sm">
+                        <i class="fa fa-plus mr-1.5"></i>新建会话
+                    </button>
+                    <p class="text-xs mt-2 text-gray-300" v-if="!isLoggedIn">请先登录</p>
+                </div>
+
+                <!-- 有会话时 -->
+                <template v-else>
+                    <!-- 会话标题 -->
+                    <div class="bg-white border-b px-5 py-3 text-sm font-semibold text-gray-700 flex-shrink-0 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span>{{ currentSessionName || '新会话' }}</span>
+                            <span class="text-xs px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full" v-if="modelName">{{ modelName }}</span>
+                        </div>
+                        <button @click="clearMessages" class="text-xs text-gray-400 hover:text-red-500 px-2 py-1 rounded hover:bg-gray-100">
+                            <i class="fa fa-trash-o mr-1"></i>清空
+                        </button>
+                    </div>
+
+                    <!-- 消息列表 -->
+                    <div class="flex-1 overflow-y-auto px-4 md:px-5 py-4 space-y-4 scrollbar" ref="msgContainer">
+                        <div class="text-center py-12 text-gray-400" v-if="messages.length === 0">
+                            <i class="fa fa-commenting-o text-4xl mb-3 opacity-30"></i>
+                            <p class="text-sm">开始发送消息吧</p>
+                        </div>
+                        <div :key="i" class="flex gap-3 fade-enter-active" v-for="(msg, i) in messages">
+                            <!-- AI -->
+                            <template v-if="msg.role === 'assistant'">
+                                <div class="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                    <i class="fa fa-robot text-indigo-500 text-xs"></i>
+                                </div>
+                                <div class="max-w-[85%] md:max-w-[75%]">
+                                    <div class="bg-white border rounded-xl rounded-tl-sm px-4 py-2.5 shadow-sm text-sm text-gray-700 markdown-body" v-html="renderMarkdown(msg.content)"></div>
+                                </div>
+                            </template>
+                            <!-- 用户 -->
+                            <template v-else>
+                                <div class="max-w-[85%] md:max-w-[75%] ml-auto">
+                                    <div class="bg-indigo-500 text-white rounded-xl rounded-tr-sm px-4 py-2.5 text-sm whitespace-pre-wrap">{{ msg.content }}</div>
+                                </div>
+                                <div class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                    <i class="fa fa-user text-blue-500 text-xs"></i>
+                                </div>
+                            </template>
+                        </div>
+
+                        <!-- 加载动画 -->
+                        <div class="flex gap-3" v-if="loading">
+                            <div class="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                                <i class="fa fa-robot text-indigo-500 text-xs"></i>
+                            </div>
+                            <div class="flex gap-1 items-center h-8">
+                                <span class="w-1.5 h-1.5 bg-gray-400 rounded-full dot-typing"></span>
+                                <span class="w-1.5 h-1.5 bg-gray-400 rounded-full dot-typing"></span>
+                                <span class="w-1.5 h-1.5 bg-gray-400 rounded-full dot-typing"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 输入区 -->
+                    <div class="bg-white border-t px-4 md:px-5 py-3 flex-shrink-0">
+                        <div class="flex gap-2">
+                            <textarea :disabled="loading" @keydown.enter.exact.prevent="send"
+                                class="flex-1 bg-gray-100 rounded-xl px-4 py-2.5 text-sm outline-none resize-none border border-transparent focus:border-indigo-300 focus:bg-white transition min-h-[40px] max-h-[200px]" placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+                                rows="1"
+                                v-model="inputText"></textarea>
+                            <button :disabled="!inputText.trim() || loading" @click="send"
+                                class="px-4 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed text-sm flex items-center">
+                                <i class="fa fa-paper-plane"></i>
+                            </button>
+                        </div>
+                        <div class="flex items-center justify-between mt-2 text-xs text-gray-400">
+                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                <input class="rounded text-indigo-500" type="checkbox" v-model="streamEnabled">
+                                流式响应
+                            </label>
+                            <span class="text-gray-300" v-if="isLoggedIn">{{ userEmail }}</span>
+                        </div>
+                    </div>
+                </template>
+            </main>
+        </div>
+
+        <!-- ====== 认证弹窗 ====== -->
+        <div @click.self="authModal.show = false" class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" v-if="authModal.show">
+            <div class="bg-white rounded-2xl p-6 w-full max-w-sm mx-4 fade-enter-active">
+                <h2 class="text-xl font-bold text-gray-800 mb-1">{{ authModal.mode === 'login' ? '登录' : '注册' }}</h2>
+                <p class="text-sm text-gray-500 mb-5">{{ authModal.mode === 'login' ? '登录到您的账户' : '创建新账户' }}</p>
+                <form @submit.prevent="doAuth" class="space-y-3.5">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">邮箱</label>
+                        <input class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" placeholder="your@email.com" required
+                            type="email"
+                            v-model="authForm.email">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">密码</label>
+                        <input class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" placeholder="至少8位，含大小写+数字+特殊字符" required
+                            type="password"
+                            v-model="authForm.password">
+                    </div>
+                    <div v-if="authModal.mode === 'register'">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">用户名（可选）</label>
+                        <input class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" placeholder="显示名称"
+                            type="text"
+                            v-model="authForm.username">
+                    </div>
+                    <p class="text-red-500 text-xs" v-if="authError">{{ authError }}</p>
+                    <button :disabled="authLoading" class="w-full py-2.5 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 disabled:opacity-50 text-sm font-medium"
+                        type="submit">
+                        {{ authLoading ? '处理中...' : (authModal.mode === 'login' ? '登录' : '注册') }}
+                    </button>
+                </form>
+                <p class="mt-4 text-center text-sm text-gray-500">
+                    <span @click="authModal.mode = authModal.mode === 'login' ? 'register' : 'login'; authError = ''"
+                        class="text-indigo-500 cursor-pointer hover:underline">
+                        {{ authModal.mode === 'login' ? '还没有账户？点击注册' : '已有账户？点击登录' }}
+                    </span>
+                </p>
+            </div>
+        </div>
+
+        <!-- ====== 重命名弹窗 ====== -->
+        <div @click.self="renameModal.show = false" class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" v-if="renameModal.show">
+            <div class="bg-white rounded-2xl p-6 w-full max-w-sm mx-4 fade-enter-active">
+                <h2 class="text-lg font-bold text-gray-800 mb-4">重命名会话</h2>
+                <input @keydown.enter.prevent="doRename" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 mb-4" placeholder="会话名称"
+                    type="text"
+                    v-model="renameModal.name">
+                <div class="flex gap-3">
+                    <button @click="renameModal.show = false" class="flex-1 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 text-sm">
+                        取消
+                    </button>
+                    <button :disabled="renameLoading" @click="doRename"
+                        class="flex-1 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 disabled:opacity-50 text-sm">
+                        {{ renameLoading ? '保存中...' : '保存' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ====== 设置弹窗 ====== -->
+        <div @click.self="showSettings = false" class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" v-if="showSettings">
+            <div class="bg-white rounded-2xl p-6 w-full max-w-sm mx-4 fade-enter-active">
+                <div class="flex items-center justify-between mb-5">
+                    <h2 class="text-lg font-bold text-gray-800">设置</h2>
+                    <button @click="showSettings = false" class="p-1 hover:bg-gray-100 rounded"><i class="fa fa-times text-gray-400"></i></button>
+                </div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">API 地址</label>
+                        <input class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:border-indigo-500" type="text"
+                            v-model="apiBase">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">默认模型</label>
+                        <input class="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-lg text-sm text-gray-500" disabled type="text"
+                            v-model="modelName">
+                    </div>
+                    <button @click="saveSettings" class="w-full py-2.5 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 text-sm font-medium">
+                        保存
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ====== Toast ====== -->
+        <transition name="fade">
+            <div class="fixed bottom-5 right-5 bg-gray-900 text-white px-4 py-2.5 rounded-xl shadow-lg text-sm z-50 flex items-center gap-2" v-if="toast.show">
+                <i :class="toast.icon"></i>
+                {{ toast.msg }}
+            </div>
+        </transition>
+    </div>
+
+    <script>
+    const { createApp, ref, reactive, computed, nextTick, onMounted } = Vue;
+
+    createApp({
+        setup() {
+            // ========== 核心状态 ==========
+            const apiBase = ref('http://localhost:8000');
+            const isLoggedIn = ref(false);
+            const userEmail = ref('');
+            const userToken = ref('');
+            const sessions = ref([]);
+            const currentSessionId = ref(null);
+            const currentSessionToken = ref('');
+            const messages = ref([]);
+            const inputText = ref('');
+            const loading = ref(false);
+            const streamEnabled = ref(true);
+            const msgContainer = ref(null);
+            const sidebarOpen = ref(false);
+            const modelName = ref('');
+
+            // 弹窗
+            const authModal = reactive({ show: false, mode: 'login' });
+            const authForm = reactive({ email: '', password: '', username: '' });
+            const authError = ref('');
+            const authLoading = ref(false);
+            const showSettings = ref(false);
+            const toast = reactive({ show: false, msg: '', icon: 'fa-check-circle text-green-400' });
+            const renameModal = reactive({ show: false, sessionId: '', name: '', token: '' });
+            const renameLoading = ref(false);
+
+            // 计算属性
+            const currentSessionName = computed(() => {
+                const s = sessions.value.find(x => x.session_id === currentSessionId.value);
+                return s?.name || '';
+            });
+
+            // ========== 工具函数 ==========
+            function notify(msg, ok = true) {
+                toast.msg = msg;
+                toast.icon = ok ? 'fa-check-circle text-green-400' : 'fa-times-circle text-red-400';
+                toast.show = true;
+                setTimeout(() => { toast.show = false; }, 3000);
+            }
+
+            function scrollBottom() {
+                nextTick(() => {
+                    if (msgContainer.value) msgContainer.value.scrollTop = msgContainer.value.scrollHeight;
+                });
+            }
+
+            function renderMarkdown(text) {
+                if (!text) return '';
+                try {
+                    // 预处理：将相对路径的图片链接转为绝对路径，确保前端能正确加载
+                    text = text.replace(
+                        /!\[([^\]]*)\]\((\/api\/v1\/chatbot\/image\/[a-f0-9-]+)\)/gi,
+                        (match, alt, url) => `![${alt}](${apiBase.value}${url})`
+                    );
+                    return marked.parse(text, { breaks: true });
+                } catch {
+                    return text;
+                }
+            }
+
+            function toggleSidebar() {
+                sidebarOpen.value = !sidebarOpen.value;
+            }
+
+            // ========== 持久化 ==========
+            function loadStorage() {
+                const s = localStorage.getItem('cb-settings');
+                if (s) {
+                    try {
+                        const p = JSON.parse(s);
+                        apiBase.value = p.apiBase || 'http://localhost:8000';
+                        streamEnabled.value = p.streamEnabled !== false;
+                        modelName.value = p.modelName || '';
+                    } catch {}
+                }
+                const a = localStorage.getItem('cb-auth');
+                if (a) {
+                    try {
+                        const p = JSON.parse(a);
+                        if (p.userToken && p.email) {
+                            userToken.value = p.userToken;
+                            userEmail.value = p.email;
+                            isLoggedIn.value = true;
+                            fetchSessions();
+                        }
+                    } catch {}
+                }
+            }
+
+            function saveAuth() {
+                localStorage.setItem('cb-auth', JSON.stringify({
+                    userToken: userToken.value,
+                    email: userEmail.value
+                }));
+            }
+
+            function saveSettings() {
+                localStorage.setItem('cb-settings', JSON.stringify({
+                    apiBase: apiBase.value,
+                    streamEnabled: streamEnabled.value,
+                    modelName: modelName.value
+                }));
+                showSettings.value = false;
+                notify('设置已保存');
+            }
+
+            function logout() {
+                userToken.value = '';
+                userEmail.value = '';
+                isLoggedIn.value = false;
+                currentSessionId.value = null;
+                currentSessionToken.value = '';
+                sessions.value = [];
+                messages.value = [];
+                localStorage.removeItem('cb-auth');
+                notify('已退出登录', true);
+            }
+
+            // ========== API 请求封装 ==========
+            async function request(method, path, { body, token, isForm } = {}) {
+                const url = `${apiBase.value}${path}`;
+                const headers = {};
+
+                if (isForm) {
+                    headers['Content-Type'] = 'application/x-www-form-urlencoded';
+                } else if (body) {
+                    headers['Content-Type'] = 'application/json';
+                }
+
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+
+                const opts = { method, headers };
+                if (body) {
+                    opts.body = isForm ? body : JSON.stringify(body);
+                }
+
+                const resp = await fetch(url, opts);
+                const text = await resp.text();
+
+                let data;
+                try { data = JSON.parse(text); } catch { data = text; }
+
+                if (!resp.ok) {
+                    const errMsg = (data && typeof data === 'object' && data.detail) ? data.detail : `HTTP ${resp.status}`;
+                    throw new Error(errMsg);
+                }
+
+                return data;
+            }
+
+            // ========== 认证 ==========
+            function openAuth(mode) {
+                authModal.mode = mode;
+                authModal.show = true;
+                authError.value = '';
+                authForm.email = '';
+                authForm.password = '';
+                authForm.username = '';
+            }
+
+            async function doAuth() {
+                authError.value = '';
+                authLoading.value = true;
+                try {
+                    if (authModal.mode === 'login') {
+                        const formBody = new URLSearchParams({
+                            email: authForm.email,
+                            password: authForm.password,
+                            grant_type: 'password'
+                        });
+                        const data = await request('POST', '/api/v1/auth/login', {
+                            body: formBody,
+                            isForm: true
+                        });
+                        userToken.value = data.access_token;
+                        userEmail.value = authForm.email;
+                    } else {
+                        const body = {
+                            email: authForm.email,
+                            password: authForm.password
+                        };
+                        if (authForm.username) body.username = authForm.username;
+                        const data = await request('POST', '/api/v1/auth/register', { body });
+                        userToken.value = data.token.access_token;
+                        userEmail.value = data.email;
+                    }
+
+                    isLoggedIn.value = true;
+                    saveAuth();
+                    authModal.show = false;
+                    notify(authModal.mode === 'login' ? '登录成功' : '注册成功');
+                    await fetchSessions();
+                } catch (e) {
+                    authError.value = e.message;
+                } finally {
+                    authLoading.value = false;
+                }
+            }
+
+            // ========== 会话管理 ==========
+            async function fetchSessions() {
+                if (!userToken.value) return;
+                try {
+                    const data = await request('GET', '/api/v1/auth/sessions', { token: userToken.value });
+                    sessions.value = Array.isArray(data) ? data : [];
+                } catch (e) {
+                    notify('获取会话列表失败: ' + e.message, false);
+                }
+            }
+
+            async function createSession() {
+                if (!isLoggedIn.value || !userToken.value) {
+                    notify('请先登录', false);
+                    openAuth('login');
+                    return;
+                }
+                try {
+                    const data = await request('POST', '/api/v1/auth/session', { token: userToken.value });
+                    currentSessionId.value = data.session_id;
+                    currentSessionToken.value = data.token.access_token;
+                    messages.value = [];
+                    await fetchSessions();
+                    notify('会话已创建');
+                    scrollBottom();
+                } catch (e) {
+                    notify('创建会话失败: ' + e.message, false);
+                }
+            }
+
+            async function switchSession(s) {
+                if (currentSessionId.value === s.session_id) return;
+                currentSessionId.value = s.session_id;
+                currentSessionToken.value = s.token.access_token;
+                messages.value = [];
+                await fetchMessages();
+            }
+
+            async function deleteSession(s) {
+                if (!confirm(`确定删除会话「${s.name || '新会话'}」？`)) return;
+                try {
+                    // 删除会话需要用户token，不是会话token
+                    await request('DELETE', `/api/v1/auth/session/${s.session_id}`, {
+                        token: userToken.value
+                    });
+                    sessions.value = sessions.value.filter(x => x.session_id !== s.session_id);
+                    if (currentSessionId.value === s.session_id) {
+                        currentSessionId.value = null;
+                        currentSessionToken.value = '';
+                        messages.value = [];
+                    }
+                    notify('会话已删除');
+                } catch (e) {
+                    notify('删除失败: ' + e.message, false);
+                }
+            }
+
+            // 重命名
+            function startRename(s) {
+                renameModal.sessionId = s.session_id;
+                renameModal.name = s.name || '';
+                renameModal.token = s.token.access_token;
+                renameModal.show = true;
+            }
+
+            async function doRename() {
+                if (!renameModal.name.trim()) {
+                    notify('名称不能为空', false);
+                    return;
+                }
+                renameLoading.value = true;
+                try {
+                    const formBody = new URLSearchParams({ name: renameModal.name.trim() });
+                    const data = await request('PATCH', `/api/v1/auth/session/${renameModal.sessionId}/name`, {
+                        body: formBody,
+                        token: renameModal.token,
+                        isForm: true
+                    });
+                    // 更新本地会话列表
+                    const idx = sessions.value.findIndex(x => x.session_id === renameModal.sessionId);
+                    if (idx !== -1) {
+                        sessions.value[idx].name = data.name;
+                    }
+                    renameModal.show = false;
+                    notify('重命名成功');
+                } catch (e) {
+                    notify('重命名失败: ' + e.message, false);
+                } finally {
+                    renameLoading.value = false;
+                }
+            }
+
+            // ========== 消息 ==========
+            async function fetchMessages() {
+                if (!currentSessionToken.value) return;
+                loading.value = true;
+                try {
+                    const data = await request('GET', '/api/v1/chatbot/messages', {
+                        token: currentSessionToken.value
+                    });
+                    if (data.messages && Array.isArray(data.messages)) {
+                        messages.value = data.messages;
+                    } else {
+                        messages.value = [];
+                    }
+                    scrollBottom();
+                } catch (e) {
+                    notify('获取消息失败: ' + e.message, false);
+                } finally {
+                    loading.value = false;
+                }
+            }
+
+            async function send() {
+                const text = inputText.value.trim();
+                if (!text || !currentSessionId.value || loading.value) return;
+
+                inputText.value = '';
+                messages.value.push({ role: 'user', content: text });
+                loading.value = true;
+                scrollBottom();
+
+                try {
+                    const apiMessages = messages.value.map(m => ({ role: m.role, content: m.content }));
+
+                    if (streamEnabled.value) {
+                        await sendStream(apiMessages);
+                    } else {
+                        await sendNormal(apiMessages);
+                    }
+                } catch (e) {
+                    notify('发送失败: ' + e.message, false);
+                } finally {
+                    loading.value = false;
+                }
+            }
+
+            async function sendStream(apiMessages) {
+                const resp = await fetch(`${apiBase.value}/api/v1/chatbot/chat/stream`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentSessionToken.value}`
+                    },
+                    body: JSON.stringify({ messages: apiMessages })
+                });
+
+                if (!resp.ok) {
+                    const text = await resp.text();
+                    let err = '请求失败';
+                    try { err = JSON.parse(text).detail || err; } catch {}
+                    throw new Error(err);
+                }
+
+                messages.value.push({ role: 'assistant', content: '' });
+                const aiMsg = messages.value[messages.value.length - 1];
+
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const d = JSON.parse(line.slice(6));
+                                if (d.done) break;
+                                if (d.content) {
+                                    aiMsg.content += d.content;
+                                    scrollBottom();
+                                }
+                            } catch {}
+                        }
+                    }
+                }
+                scrollBottom();
+            }
+
+            async function sendNormal(apiMessages) {
+                const data = await request('POST', '/api/v1/chatbot/chat', {
+                    body: { messages: apiMessages },
+                    token: currentSessionToken.value
+                });
+                if (data.messages && data.messages.length > 0) {
+                    const last = data.messages[data.messages.length - 1];
+                    if (last.role === 'assistant') {
+                        messages.value.push({ role: 'assistant', content: last.content });
+                    }
+                }
+                scrollBottom();
+            }
+
+            async function clearMessages() {
+                if (!currentSessionToken.value) return;
+                if (!confirm('确定清空当前会话的所有消息？')) return;
+                try {
+                    await request('DELETE', '/api/v1/chatbot/messages', {
+                        token: currentSessionToken.value
+                    });
+                    messages.value = [];
+                    notify('已清空');
+                } catch (e) {
+                    notify('清空失败: ' + e.message, false);
+                }
+            }
+
+            // ========== 获取模型信息 ==========
+            async function fetchModelInfo() {
+                try {
+                    const data = await request('GET', '/api/v1/chatbot/model');
+                    if (data.model_name) {
+                        modelName.value = data.model_name;
+                    }
+                } catch (e) {
+                    // 静默失败，不影响主流程
+                    console.log('获取模型信息失败:', e.message);
+                }
+            }
+
+            // ========== 初始化 ==========
+            onMounted(() => {
+                loadStorage();
+                fetchModelInfo();
+            });
+
+            return {
+                apiBase, isLoggedIn, userEmail, sessions, currentSessionId, currentSessionName,
+                messages, inputText, loading, streamEnabled, msgContainer, sidebarOpen, modelName,
+                authModal, authForm, authError, authLoading, showSettings, toast, renameModal, renameLoading,
+                openAuth, doAuth, logout, createSession, switchSession, deleteSession,
+                send, clearMessages, saveSettings, renderMarkdown, toggleSidebar, startRename, doRename,
+                fetchModelInfo
+            };
+        }
+    }).mount('#app');
+    </script>
+</body>
+</html>
