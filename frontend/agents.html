@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent 管理平台</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus/dist/index.css">
+    <script src="https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.js"></script>
+    <style>
+        .status-active { background-color: #d9f7be; color: #389e0d; }
+        .status-inactive { background-color: #fff2e8; color: #fa8c16; }
+        .status-draft { background-color: #f6ffed; color: #52c41a; }
+    </style>
+</head>
+<body>
+    <div id="app" style="padding: 20px;">
+        <el-container>
+            <el-header style="display: flex; justify-content: space-between; align-items: center;">
+                <h1>Agent 管理平台</h1>
+                <el-button type="primary" @click="showCreateModal = true">创建 Agent</el-button>
+            </el-header>
+            
+            <el-main>
+                <!-- 搜索和筛选 -->
+                <el-row :gutter="20" style="margin-bottom: 20px;">
+                    <el-col :span="12">
+                        <el-input 
+                            v-model="searchKeyword" 
+                            placeholder="搜索 Agent 名称或描述"
+                            @keyup.enter="loadAgents"
+                            prefix-icon="Search"
+                        />
+                    </el-col>
+                    <el-col :span="8">
+                        <el-select v-model="statusFilter" placeholder="状态筛选" @change="loadAgents">
+                            <el-option label="全部" value="" />
+                            <el-option label="运行中" value="active" />
+                            <el-option label="停用" value="inactive" />
+                            <el-option label="草稿" value="draft" />
+                        </el-select>
+                    </el-col>
+                    <el-col :span="4">
+                        <el-button type="default" @click="loadAgents">刷新</el-button>
+                    </el-col>
+                </el-row>
+                
+                <!-- 批量操作 -->
+                <el-row v-if="selectedAgents.length > 0" style="margin-bottom: 20px;">
+                    <el-tag>已选择 {{ selectedAgents.length }} 个 Agent</el-tag>
+                    <el-button type="success" @click="batchEnable">批量启用</el-button>
+                    <el-button type="warning" @click="batchDisable">批量停用</el-button>
+                    <el-button type="danger" @click="batchDelete">批量删除</el-button>
+                </el-row>
+                
+                <!-- Agent 列表 -->
+                <el-table 
+                    :data="agents" 
+                    :loading="loading"
+                    @selection-change="handleSelectionChange"
+                    border
+                    style="width: 100%;"
+                >
+                    <el-table-column type="selection" width="55" />
+                    <el-table-column prop="name" label="Agent 名称" width="180" />
+                    <el-table-column prop="description" label="功能描述" />
+                    <el-table-column prop="tool_count" label="工具数量" width="100" />
+                    <el-table-column prop="status" label="状态" width="100">
+                        <template #default="scope">
+                            <el-tag :class="'status-' + scope.row.status">
+                                {{ statusText[scope.row.status] }}
+                            </el-tag>
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="created_at" label="创建时间" width="180" />
+                    <el-table-column label="操作" width="200">
+                        <template #default="scope">
+                            <el-button size="small" @click="viewAgent(scope.row)">查看</el-button>
+                            <el-button size="small" @click="editAgent(scope.row)">编辑</el-button>
+                            <el-button size="small" type="danger" @click="deleteAgent(scope.row)">删除</el-button>
+                        </template>
+                    </el-table-column>
+                </el-table>
+                
+                <!-- 分页 -->
+                <el-pagination
+                    :current-page="page"
+                    :page-size="size"
+                    :total="total"
+                    @current-change="handlePageChange"
+                    style="margin-top: 20px; text-align: center;"
+                />
+            </el-main>
+        </el-container>
+        
+        <!-- 创建/编辑 Agent 弹窗 -->
+        <el-dialog :title="isEdit ? '编辑 Agent' : '创建 Agent'" v-model="showCreateModal">
+            <el-form :model="agentForm" label-width="100px">
+                <el-form-item label="Agent 名称">
+                    <el-input v-model="agentForm.name" placeholder="请输入 Agent 名称" />
+                </el-form-item>
+                <el-form-item label="功能描述">
+                    <el-textarea v-model="agentForm.description" placeholder="请输入功能描述" :rows="3" />
+                </el-form-item>
+                <el-form-item label="状态">
+                    <el-select v-model="agentForm.status">
+                        <el-option label="运行中" value="active" />
+                        <el-option label="停用" value="inactive" />
+                        <el-option label="草稿" value="draft" />
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="关联工具">
+                    <el-select v-model="agentForm.tool_ids" multiple placeholder="请选择工具">
+                        <el-option v-for="tool in tools" :key="tool.id" :label="tool.name" :value="tool.id" />
+                    </el-select>
+                </el-form-item>
+            </el-form>
+            <template #footer>
+                <el-button @click="showCreateModal = false">取消</el-button>
+                <el-button type="primary" @click="saveAgent">{{ isEdit ? '保存修改' : '创建' }}</el-button>
+            </template>
+        </el-dialog>
+        
+        <!-- Agent 详情弹窗 -->
+        <el-dialog title="Agent 详情" v-model="showDetailModal" width="800px">
+            <div v-if="currentAgent">
+                <el-descriptions :column="2" border>
+                    <el-descriptions-item label="Agent 名称">{{ currentAgent.name }}</el-descriptions-item>
+                    <el-descriptions-item label="状态">
+                        <el-tag :class="'status-' + currentAgent.status">{{ statusText[currentAgent.status] }}</el-tag>
+                    </el-descriptions-item>
+                    <el-descriptions-item label="功能描述" :span="2">{{ currentAgent.description || '-' }}</el-descriptions-item>
+                    <el-descriptions-item label="工具数量">{{ currentAgent.tool_count }}</el-descriptions-item>
+                    <el-descriptions-item label="创建时间">{{ currentAgent.created_at }}</el-descriptions-item>
+                </el-descriptions>
+                
+                <h3 style="margin-top: 20px;">关联工具</h3>
+                <el-table :data="currentAgent.tools" border>
+                    <el-table-column prop="name" label="工具名称" />
+                    <el-table-column prop="description" label="功能说明" />
+                    <el-table-column prop="status" label="状态" />
+                </el-table>
+            </div>
+            <template #footer>
+                <el-button @click="showDetailModal = false">关闭</el-button>
+                <el-button type="primary" @click="testAgent">测试对话</el-button>
+            </template>
+        </el-dialog>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+        const { ElMessage, ElMessageBox } = ElementPlus;
+
+        createApp({
+            data() {
+                return {
+                    agents: [],
+                    tools: [],
+                    loading: false,
+                    page: 1,
+                    size: 20,
+                    total: 0,
+                    searchKeyword: '',
+                    statusFilter: '',
+                    selectedAgents: [],
+                    
+                    showCreateModal: false,
+                    showDetailModal: false,
+                    isEdit: false,
+                    currentAgent: null,
+                    agentForm: {
+                        name: '',
+                        description: '',
+                        status: 'draft',
+                        tool_ids: []
+                    },
+                    
+                    statusText: {
+                        active: '运行中',
+                        inactive: '停用',
+                        draft: '草稿'
+                    },
+                    
+                    apiBase: '/api/v1'
+                };
+            },
+            
+            mounted() {
+                this.loadAgents();
+                this.loadTools();
+            },
+            
+            methods: {
+                async loadAgents() {
+                    this.loading = true;
+                    try {
+                        const params = {
+                            page: this.page,
+                            size: this.size
+                        };
+                        if (this.statusFilter) params.status = this.statusFilter;
+                        if (this.searchKeyword) params.search = this.searchKeyword;
+                        
+                        const response = await axios.get(`${this.apiBase}/agents`, { params });
+                        if (response.data.code === 200) {
+                            this.agents = response.data.data.items;
+                            this.total = response.data.data.total;
+                        }
+                    } catch (error) {
+                        ElMessage.error('加载 Agent 列表失败');
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                async loadTools() {
+                    try {
+                        const response = await axios.get(`${this.apiBase}/agents/tools`);
+                        if (response.data.code === 200) {
+                            this.tools = response.data.data.items;
+                        }
+                    } catch (error) {
+                        console.error('加载工具列表失败', error);
+                    }
+                },
+                
+                handlePageChange(page) {
+                    this.page = page;
+                    this.loadAgents();
+                },
+                
+                handleSelectionChange(val) {
+                    this.selectedAgents = val;
+                },
+                
+                viewAgent(agent) {
+                    axios.get(`${this.apiBase}/agents/${agent.id}`)
+                        .then(response => {
+                            if (response.data.code === 200) {
+                                this.currentAgent = response.data;
+                                this.showDetailModal = true;
+                            }
+                        })
+                        .catch(error => {
+                            ElMessage.error('获取 Agent 详情失败');
+                        });
+                },
+                
+                editAgent(agent) {
+                    this.isEdit = true;
+                    this.agentForm = {
+                        id: agent.id,
+                        name: agent.name,
+                        description: agent.description || '',
+                        status: agent.status,
+                        tool_ids: []
+                    };
+                    this.showCreateModal = true;
+                },
+                
+                async deleteAgent(agent) {
+                    try {
+                        await ElMessageBox.confirm('确定要删除这个 Agent 吗？', '提示', {
+                            type: 'warning'
+                        });
+                        
+                        const response = await axios.delete(`${this.apiBase}/agents/${agent.id}`);
+                        if (response.data.code === 200) {
+                            ElMessage.success('删除成功');
+                            this.loadAgents();
+                        }
+                    } catch (error) {
+                        if (error !== 'cancel') {
+                            ElMessage.error('删除失败');
+                        }
+                    }
+                },
+                
+                saveAgent() {
+                    if (!this.agentForm.name) {
+                        ElMessage.warning('请输入 Agent 名称');
+                        return;
+                    }
+                    
+                    const url = this.isEdit 
+                        ? `${this.apiBase}/agents/${this.agentForm.id}`
+                        : `${this.apiBase}/agents`;
+                    const method = this.isEdit ? 'put' : 'post';
+                    
+                    axios[method](url, this.agentForm)
+                        .then(response => {
+                            if (response.data.code === 200 || response.status === 200) {
+                                ElMessage.success(this.isEdit ? '修改成功' : '创建成功');
+                                this.showCreateModal = false;
+                                this.loadAgents();
+                                this.resetForm();
+                            }
+                        })
+                        .catch(error => {
+                            ElMessage.error(this.isEdit ? '修改失败' : '创建失败');
+                        });
+                },
+                
+                resetForm() {
+                    this.agentForm = {
+                        name: '',
+                        description: '',
+                        status: 'draft',
+                        tool_ids: []
+                    };
+                    this.isEdit = false;
+                },
+                
+                async batchEnable() {
+                    await this.batchAction('enable');
+                },
+                
+                async batchDisable() {
+                    await this.batchAction('disable');
+                },
+                
+                async batchDelete() {
+                    try {
+                        await ElMessageBox.confirm('确定要批量删除选中的 Agent 吗？', '提示', {
+                            type: 'warning'
+                        });
+                        await this.batchAction('delete');
+                    } catch (error) {
+                        if (error !== 'cancel') {
+                            ElMessage.error('删除失败');
+                        }
+                    }
+                },
+                
+                async batchAction(action) {
+                    const ids = this.selectedAgents.map(a => a.id);
+                    try {
+                        const response = await axios.post(`${this.apiBase}/agents/batch`, {
+                            ids,
+                            action
+                        });
+                        if (response.data.code === 200) {
+                            const { success_count, failed_count } = response.data;
+                            ElMessage.success(`操作完成：成功 ${success_count} 个，失败 ${failed_count} 个`);
+                            this.loadAgents();
+                            this.selectedAgents = [];
+                        }
+                    } catch (error) {
+                        ElMessage.error('批量操作失败');
+                    }
+                },
+                
+                testAgent() {
+                    window.open(`chat.html?agent_id=${this.currentAgent.id}`, '_blank');
+                }
+            }
+        }).use(ElementPlus).mount('#app');
+    </script>
+</body>
+</html>

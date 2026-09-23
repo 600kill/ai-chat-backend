@@ -26,6 +26,7 @@ class User(BaseModel, table=True):
         email: User's email (unique)
         hashed_password: Bcrypt hashed password
         username: Optional display name for the user
+        role: User role (admin/user)
         created_at: When the user was created
         sessions: Relationship to user's chat sessions
     """
@@ -34,6 +35,7 @@ class User(BaseModel, table=True):
     email: str = Field(unique=True, index=True)
     hashed_password: str
     username: Optional[str] = Field(default=None, index=False)
+    role: str = Field(default="user", index=True)  # admin/user
     sessions: List["Session"] = Relationship(back_populates="user")
 
     def verify_password(self, password: str) -> bool:

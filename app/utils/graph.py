@@ -9,6 +9,9 @@
 """
 
 # Token计算库
+import math
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
 import tiktoken
 # LangChain消息基类
 from langchain_core.messages import BaseMessage
@@ -22,13 +25,53 @@ from app.core.logging import logger
 # 消息Schema模型
 from app.schemas import Message
 
-# 模块级缓存tiktoken编码器：线程安全、可复用
-try:
-    # 根据默认LLM模型获取编码器
-    _TIKTOKEN_ENCODING = tiktoken.encoding_for_model(settings.DEFAULT_LLM_MODEL)
-except KeyError:
-    # 模型不匹配时使用通用编码器
-    _TIKTOKEN_ENCODING = tiktoken.get_encoding("cl100k_base")
+# 模块级缓存tiktoken编码器：线程安全、可复用。
+# tiktoken 首次使用会从 openaipublic.blob.core.windows.net 下载 BPE 词表，
+# 网络不通时 requests 无超时会永久卡死并阻塞整个应用启动，
+# 因此限时 10 秒初始化，失败则降级为启发式 token 估算。
+_TIKTOKEN_ENCODING = None
+_TIKTOKEN_INIT_DONE = False
+
+
+def _init_encoding():
+    try:
+        return tiktoken.encoding_for_model(settings.DEFAULT_LLM_MODEL)
+    except KeyError:
+        return tiktoken.get_encoding("cl100k_base")
+
+
+def _ensure_encoding():
+    """限时初始化 tiktoken 编码器；超时/失败返回 None（调用方降级估算）。"""
+    global _TIKTOKEN_ENCODING, _TIKTOKEN_INIT_DONE
+    if _TIKTOKEN_INIT_DONE:
+        return _TIKTOKEN_ENCODING
+    _TIKTOKEN_INIT_DONE = True
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tiktoken-init")
+    try:
+        _TIKTOKEN_ENCODING = executor.submit(_init_encoding).result(timeout=10)
+        logger.info("tiktoken_encoding_ready", encoding=_TIKTOKEN_ENCODING.name)
+    except (FuturesTimeoutError, Exception) as e:
+        logger.warning(
+            "tiktoken_encoding_unavailable_use_heuristic",
+            error=str(e),
+        )
+        _TIKTOKEN_ENCODING = None
+    finally:
+        # 不等待可能仍挂起的下载线程，避免阻塞事件循环/启动
+        executor.shutdown(wait=False, cancel_futures=True)
+    return _TIKTOKEN_ENCODING
+
+
+def _token_len(text: str) -> int:
+    """计算单段文本 token 数；tiktoken 不可用时用中英文混合启发式估算。"""
+    if not text:
+        return 0
+    encoding = _ensure_encoding()
+    if encoding is not None:
+        return len(encoding.encode(text))
+    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+    other = len(text) - cjk
+    return cjk + math.ceil(other / 4)
 
 
 def _count_tokens_tiktoken(messages: list) -> int:
@@ -45,20 +88,20 @@ def _count_tokens_tiktoken(messages: list) -> int:
         if isinstance(message, dict):
             for _, value in message.items():
                 if isinstance(value, str):
-                    num_tokens += len(_TIKTOKEN_ENCODING.encode(value))
+                    num_tokens += _token_len(value)
         # 处理LangChain BaseMessage格式消息
         elif isinstance(message, BaseMessage):
             content = message.content
             # 字符串内容
             if isinstance(content, str):
-                num_tokens += len(_TIKTOKEN_ENCODING.encode(content))
+                num_tokens += _token_len(content)
             # 列表格式内容（多块文本）
             elif isinstance(content, list):
                 for block in content:
                     if isinstance(block, str):
-                        num_tokens += len(_TIKTOKEN_ENCODING.encode(block))
+                        num_tokens += _token_len(block)
                     elif isinstance(block, dict) and "text" in block:
-                        num_tokens += len(_TIKTOKEN_ENCODING.encode(block["text"]))
+                        num_tokens += _token_len(block["text"])
     # 每条回复固定增加2个Token（assistant前缀）
     num_tokens += 2
     return num_tokens

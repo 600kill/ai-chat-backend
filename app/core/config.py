@@ -171,9 +171,42 @@ class Settings:
         self.MAX_LLM_CALL_RETRIES = int(os.getenv("MAX_LLM_CALL_RETRIES", "3"))
         self.LLM_TOTAL_TIMEOUT = int(os.getenv("LLM_TOTAL_TIMEOUT", "60"))
 
+        # ===== 本地 LLM 网关（LiteLLM Proxy，OpenAI 兼容协议）=====
+        self.GATEWAY_BASE_URL = os.getenv("GATEWAY_BASE_URL", "")
+        self.GATEWAY_API_KEY = os.getenv("GATEWAY_API_KEY", "")
+        self.GATEWAY_MODEL = os.getenv("GATEWAY_MODEL", "")
+
+        # ===== 评测 Judge 模型（默认走 DashScope，与网关分流）=====
+        self.JUDGE_MODEL = os.getenv("JUDGE_MODEL", "qwen-plus")
+        self.JUDGE_BASE_URL = os.getenv("JUDGE_BASE_URL", "")
+        self.JUDGE_API_KEY = os.getenv("JUDGE_API_KEY", self.DASHSCOPE_API_KEY)
+
+        # ===== RAG 配置 =====
+        # embedding 提供方：openai=OpenAI 兼容远程接口（DashScope）；local=本地 sentence-transformers
+        self.RAG_EMBEDDING_PROVIDER = os.getenv("RAG_EMBEDDING_PROVIDER", "openai").lower()
+        self.RAG_EMBEDDING_MODEL = os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-v2")
+        self.RAG_EMBEDDING_BASE_URL = os.getenv(
+            "RAG_EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        )
+        self.RAG_EMBEDDING_API_KEY = os.getenv("RAG_EMBEDDING_API_KEY", self.DASHSCOPE_API_KEY)
+        # 本地模型（provider=local 时使用，首次自动从 HF_ENDPOINT 下载）
+        self.RAG_LOCAL_EMBEDDING_MODEL = os.getenv(
+            "RAG_LOCAL_EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5"
+        )
+        # 向量维度：text-embedding-v2=1536；bge-small-zh-v1.5=512（换模型需重建分片表）
+        self.RAG_EMBEDDING_DIM = int(os.getenv("RAG_EMBEDDING_DIM", "1536"))
+        self.RAG_CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "600"))
+        self.RAG_CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "80"))
+        self.RAG_TOP_K = int(os.getenv("RAG_TOP_K", "4"))
+        self.RAG_MAX_UPLOAD_MB = int(os.getenv("RAG_MAX_UPLOAD_MB", "10"))
+
+        # ===== Redis / RQ 任务队列 =====
+        self.REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
         # 长时记忆AI模型配置
         self.LONG_TERM_MEMORY_MODEL = os.getenv("LONG_TERM_MEMORY_MODEL", "gpt-5-nano")
         self.LONG_TERM_MEMORY_EMBEDDER_MODEL = os.getenv("LONG_TERM_MEMORY_EMBEDDER_MODEL", "text-embedding-3-small")
+        self.LONG_TERM_MEMORY_EMBEDDING_DIMS = int(os.getenv("LONG_TERM_MEMORY_EMBEDDING_DIMS", "1536"))
         self.LONG_TERM_MEMORY_COLLECTION_NAME = os.getenv("LONG_TERM_MEMORY_COLLECTION_NAME", "longterm_memory")
         # ✅ 新增：国内 embedding 配置
         self.EMBEDDER_API_KEY = os.getenv("EMBEDDER_API_KEY", "")

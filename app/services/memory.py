@@ -41,22 +41,24 @@ class MemoryService:
                             "password": settings.POSTGRES_PASSWORD,
                             "host": settings.POSTGRES_HOST,
                             "port": settings.POSTGRES_PORT,
+                            "embedding_model_dims": settings.LONG_TERM_MEMORY_EMBEDDING_DIMS,
                         },
                     },
                     "llm": {
                         "provider": "openai",
                         "config": {
-                            "model": settings.LONG_TERM_MEMORY_MODEL,  # qwen-turbo
-                            "api_key": settings.DASHSCOPE_API_KEY,
-                            "openai_base_url": settings.EMBEDDER_BASE_URL,  # ✅ 不是 base_url！
+                            "model": settings.LONG_TERM_MEMORY_MODEL,  # 本地网关模型
+                            "api_key": settings.GATEWAY_API_KEY,
+                            "openai_base_url": settings.GATEWAY_BASE_URL,  # ✅ 不是 base_url！
                         },
                     },
                     "embedder": {
-                        "provider": "openai",
+                        # 本地 bge 模型，与 RAG 共用缓存，避免依赖欠费的 DashScope embedding
+                        "provider": "huggingface",
                         "config": {
-                            "model": settings.LONG_TERM_MEMORY_EMBEDDER_MODEL,  # text-embedding-v2
-                            "api_key": settings.DASHSCOPE_API_KEY,
-                            "openai_base_url": settings.EMBEDDER_BASE_URL,  # ✅ 不是 base_url！
+                            "model": settings.LONG_TERM_MEMORY_EMBEDDER_MODEL,
+                            "model_kwargs": {"local_files_only": True},  # 避免运行时联网校验被代理拦截
+                            "embedding_dims": settings.LONG_TERM_MEMORY_EMBEDDING_DIMS,
                         },
                     },
                 }

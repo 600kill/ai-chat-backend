@@ -47,7 +47,7 @@ from asgi_correlation_id import CorrelationIdMiddleware
 
 # ==================== 项目内部模块导入 ====================
 # 导入项目所有接口的路由集合
-from app.api.v1.api import api_router
+from app.api.v1.router import api_router
 # 导入LangGraph智能体核心
 from app.api.v1.chatbot import agent
 # 导入缓存服务（Valkey/Redis）
@@ -56,6 +56,8 @@ from app.core.cache import cache_service
 from app.core.config import settings
 # 导入接口限流工具
 from app.core.limiter import limiter
+# Langfuse 可观测性（trace 上报客户端）
+from app.core.observability import init_langfuse, shutdown_langfuse
 
 
 
@@ -86,6 +88,9 @@ async def lifespan(app: FastAPI):
         version=settings.VERSION,
         api_prefix=settings.API_V1_STR,
     )'''
+
+    # ==================== 启动时执行：初始化 Langfuse trace 客户端 ====================
+    init_langfuse()
 
     # ==================== 启动时执行：初始化缓存服务 ====================
     try:
@@ -124,6 +129,8 @@ async def lifespan(app: FastAPI):
     # ==================== 关闭时执行：资源释放 ====================
     # 关闭缓存连接
     await cache_service.close()
+    # 关闭 Langfuse 客户端（flush 残余事件）
+    shutdown_langfuse()
     # 关闭智能体的数据库连接池
     if agent._connection_pool:
         await agent._connection_pool.close()

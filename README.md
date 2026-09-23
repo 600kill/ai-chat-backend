@@ -1,230 +1,171 @@
-# AI Chat Backend
+# AI Agent 开发、运行与评测平台
 
-基于 FastAPI + LangGraph 构建的企业级 AI 聊天机器人后端服务。
+基于 **FastAPI + LangGraph + PostgreSQL/pgvector + RQ + Langfuse** 构建的企业级 AI Agent 平台：
+可配置 Agent（提示词/模型/工具/知识库）、RAG 知识库、Agent 版本快照与回滚、
+LLM-as-Judge 自动化评测、全链路 Langfuse trace 观测。
 
-## 项目简介
+## 功能全景
 
-轻量级 AI 对话后端项目，集成 LangGraph 智能体工作流、长时记忆、多模型自动降级、JWT 认证、接口限流等生产级特性，支持流式响应和图表生成工具调用。
+| 模块 | 说明 |
+|------|------|
+| Agent 运行时 | LangGraph ReAct 图（chat ⇄ tool_call），Human-in-the-loop 审批中断，流式响应 |
+| 多模型网关 | 全部 LLM 调用经 OpenAI 兼容网关（LiteLLM Proxy），对话/记忆/Judge 统一入口 |
+| RAG 知识库 | 文档上传（txt/md/pdf）→ 切片 → embedding（本地 bge 或远程 OpenAI 兼容）→ pgvector HNSW 余弦检索，作为图节点自动注入 |
+| 工具 | calculator、document_search（封装知识库检索）、搜索、图表、人工确认 |
+| 版本管理 | 配置快照（工具存完整定义，自包含）、软回滚（新建版本留审计）、按 v1/v2/v3 复现运行 |
+| 评测 | 测试集/用例 → RQ 异步串行执行 → 三档工具判分 + RAG recall + LLM Judge 三维打分 → 版本对比报告 |
+| 可观测性 | Langfuse trace 树（agent/retriever/tool/llm），本地 metrics 表，结构化日志（structlog） |
+| 基础 | JWT 认证、RBAC（user/admin）、slowapi 限流、mem0 长时记忆 |
 
 ## 技术栈
 
 | 类别 | 技术 |
 |------|------|
-| Web 框架 | FastAPI 0.115.0 |
-| AI 工作流 | LangGraph 0.2.0 |
-| 数据库 | PostgreSQL 16 + pgvector |
-| ORM | SQLModel 2.0.0 |
-| 缓存 | Redis 5.0.0（支持降级到内存） |
-| 认证 | JWT (python-jose) |
-| 限流 | slowapi |
-| 数据迁移 | Alembic 1.13.0 |
-| 容器化 | Docker + Docker Compose |
+| Web 框架 | FastAPI |
+| AI 编排 | LangGraph + LangChain |
+| 数据库 | PostgreSQL 16 + pgvector（HNSW） |
+| ORM / 迁移 | SQLModel / Alembic（迁移 01-09） |
+| 任务队列 | Redis + RQ（评测异步执行） |
+| Embedding | sentence-transformers（本地 bge-small-zh，512 维）/ OpenAI 兼容接口 |
+| 观测 | Langfuse v4（自托管） |
+| 容器 | Docker Compose（db / redis / app / worker） |
 
-## 项目目录结构
+## 目录结构
+
+工作区根目录（AIRAG/）布局：
 
 ```
-zhuanyexiangmu/
+AIRAG/
+├── main_project/                # 本项目（核心，旧名 zhuanyexiangmu）
+├── experiments/                 # 实验/学习代码（agent实验、LangGraph练习、PGVector练习、RAG-Knowledge-Chat、rag项目）
+├── configs/                     # 工作区级配置
+├── scripts/                     # 工作区级脚本
+├── docs/                        # 工作区级文档
+├── .venv/                       # Python 虚拟环境（已 gitignore）
+└── logs/
+```
+
+`main_project/` 内部结构：
+
+```
+main_project/
 ├── app/
-│   ├── api/v1/              # REST API 接口层
-│   │   ├── auth.py          # 用户认证（注册/登录/会话管理）
-│   │   ├── chatbot.py       # 聊天接口（普通/流式/图片获取）
-│   │   └── api.py           # 路由聚合
-│   ├── core/                # 核心配置与组件
-│   │   ├── config.py        # 环境配置管理（多环境支持）
-│   │   ├── langgraph/       # LangGraph 智能体核心
-│   │   │   ├── graph.py     # 工作流定义与状态管理
-│   │   │   └── tools/       # 工具调用（图表生成/搜索）
-│   │   ├── prompts/         # 提示词模板
-│   │   ├── cache.py         # 缓存服务（Redis/内存降级）
-│   │   ├── limiter.py       # 接口限流配置
-│   │   └── logging.py       # 结构化日志
-│   ├── models/              # 数据库模型
-│   │   ├── user.py          # 用户模型
-│   │   ├── session.py       # 会话模型
-│   │   └── base.py          # 基础模型
-│   ├── schemas/             # Pydantic 数据校验
-│   │   ├── auth.py          # 认证相关 Schema
-│   │   ├── chat.py          # 聊天相关 Schema
-│   │   └── base.py          # 基础响应模型
-│   ├── services/            # 业务服务层
-│   │   ├── database.py      # 数据库操作服务
-│   │   ├── memory.py        # 长时记忆服务
-│   │   ├── session_naming.py # 会话自动命名
-│   │   └── llm/             # LLM 服务（重试+降级）
-│   └── utils/               # 工具函数
-│       ├── auth.py          # JWT 令牌工具
-│       └── sanitization.py  # 输入清洗
-├── alembic/                 # 数据库迁移
-│   └── versions/            # 迁移脚本
-├── tests/                   # 单元测试
-│   └── test_api.py          # API 接口测试
-├── frontend/                # 前端页面
-│   └── index.html           # 聊天界面
-├── .env                     # 环境变量配置
-├── .gitignore               # Git 忽略规则
-├── Dockerfile               # 容器镜像构建
-├── docker-compose.yml       # 容器编排配置
-├── requirements.txt         # Python 依赖
-├── alembic.ini              # Alembic 配置
-└── main.py                  # 项目入口
+│   ├── api/v1/                  # REST 接口层（统一复数/语义化命名）
+│   │   ├── agents.py / my.py    # Agent 管理（公共/私有），含知识库绑定
+│   │   ├── agent_services.py    # 会话与对话（支持 version_no/version_id 按版本运行）
+│   │   ├── knowledge.py         # 知识库/文档/检索/绑定 API
+│   │   ├── versions.py          # 版本发布/列表/详情/软回滚
+│   │   ├── evaluation.py        # 测试集/用例/评测 run/续跑/对比
+│   │   ├── admin.py             # 管理端接口（复用 v1 鉴权，挂在 /api/v1/admin）
+│   │   └── router.py            # 路由聚合
+│   ├── core/
+│   │   ├── config.py            # 全部环境变量（settings）
+│   │   ├── langgraph/
+│   │   │   ├── graph.py         # ReAct 图：retrieve_knowledge → chat ⇄ tool_call
+│   │   │   └── tools/           # calculator / document_search / ...
+│   │   └── observability/       # Langfuse handler（可开关，业务零埋点）
+│   ├── models/                  # SQLModel：user/agent/rag/version/evaluation/metrics...
+│   ├── schemas/                 # Pydantic 校验
+│   ├── services/
+│   │   ├── llm/                 # 模型注册表（三级：Agent 配置→网关→默认）
+│   │   ├── embedding.py         # 双 provider embedding（local/openai）
+│   │   ├── rag_service.py       # 文档解析/切片/embedding/pgvector 检索
+│   │   ├── version_service.py   # 快照发布与软回滚
+│   │   ├── agent_runtime_service.py  # build_config：当前配置 或 版本快照还原
+│   │   ├── memory.py            # mem0 长时记忆
+│   │   └── evaluation/
+│   │       ├── judges.py        # 三档工具判分 / LLM Judge / RAG recall
+│   │       └── runner.py        # 串行执行评测 case（按版本快照）
+│   └── tasks/
+│       └── evaluation_worker.py # RQ 入队 + worker 入口（含 Windows 兼容模式）
+├── alembic/versions/            # 01 init … 07 RAG / 08 版本 / 09 评测
+├── docs/                        # API 与模块文档
+├── docker-compose.yml           # db + redis + app + worker（项目名固定为 zhuanyexiangmu）
+└── main.py                      # 入口（lifespan 初始化 Langfuse）
 ```
 
-## 本地开发运行教程
+## 本地开发
 
-### 1. 环境准备
+### 1. 依赖与配置
 
 ```bash
-# 创建虚拟环境
 python -m venv .venv
-
-# 激活虚拟环境
-# Windows:
-.venv\Scripts\Activate.ps1
-# Linux/Mac:
-source .venv/bin/activate
-
-# 安装依赖
+.venv\Scripts\Activate.ps1        # Windows
 pip install -r requirements.txt
+
+copy .env.example .env            # 填入网关 key、数据库、Langfuse 等
 ```
 
-### 2. 数据库配置
+前置服务：
 
-确保 PostgreSQL 已启动，修改 `.env` 文件：
-
-```env
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_DB=app_db
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-
-# AI 模型配置
-DASHSCOPE_API_KEY=your-api-key
-DEFAULT_LLM_MODEL=qwen-turbo
-
-# JWT 密钥
-JWT_SECRET_KEY=your-secret-key
-```
-
-### 3. 数据库迁移
-
-```bash
-# 初始化迁移
-alembic upgrade head
-```
-
-### 4. 启动服务
-
-```bash
-# 开发模式（热重载）
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-
-# 生产模式
-uvicorn main:app --host 0.0.0.0 --port 8000
-```
-
-### 5. 访问服务
-
-- API 文档：http://localhost:8000/docs
-- 前端界面：http://localhost:8000/frontend/index.html
-
-## Docker 部署教程
-
-### 1. 一键启动
-
-```bash
-# 启动所有服务（数据库 + 应用）
-docker-compose up -d
-
-# 查看日志
-docker-compose logs -f app
-```
+- **PostgreSQL + pgvector**：`docker compose up -d db`
+- **Redis**（评测队列）：`docker compose up -d redis`
+- **LLM 网关**：本地 LiteLLM Proxy（OpenAI 兼容），配 `GATEWAY_*`
+- **Langfuse**（可选）：`langfuse/` 目录 `docker compose up -d`，配 `LANGFUSE_*`
 
 ### 2. 数据库迁移
 
 ```bash
-# 进入应用容器
-docker-compose exec app bash
-
-# 执行迁移
-alembic upgrade head
-
-# 退出容器
-exit
+alembic upgrade head              # 建表至 09（含 vector 扩展与 HNSW 索引）
 ```
 
-### 3. 停止服务
+首次使用需初始化内置工具：
 
 ```bash
-# 停止所有服务
-docker-compose down
-
-# 停止并删除数据卷（谨慎使用）
-docker-compose down -v
+python -m app.cli.init_tools
 ```
 
-### 4. 环境变量配置
+### 3. 启动 API 与评测 worker
 
-确保 `.env` 文件配置正确，docker-compose 会自动读取：
+```bash
+# API
+uvicorn main:app --host 127.0.0.1 --port 8000
+
+# 评测 worker（二选一）
+python -m app.tasks.evaluation_worker                    # Windows：SimpleWorker 同进程串行
+rq worker evaluations --url redis://localhost:6379/0     # Linux/Docker：标准多进程 worker
+```
+
+- API 文档：http://localhost:8000/docs
+- 前端页面：http://localhost:8000/frontend/index.html
+
+### 4. Embedding provider 切换
+
+默认本地模型（离线、免费、512 维）：
 
 ```env
-POSTGRES_HOST=db
-POSTGRES_PORT=5432
-POSTGRES_DB=app_db
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-
-DASHSCOPE_API_KEY=your-api-key
+RAG_EMBEDDING_PROVIDER=local
+RAG_LOCAL_EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
+RAG_EMBEDDING_DIM=512
 ```
 
-## 单元测试
+切远程 OpenAI 兼容接口时改 `.env` 对应块（如 1536 维）。**向量维度建表时固化，切换维度需重建 knowledge_chunk 表。**
 
-### 1. 运行测试
+## 核心链路速览
+
+1. **对话**：`POST /api/v1/agent-sessions/{id}/chat`，请求体可带 `version_no`/`version_id` 按历史版本运行（响应带 `warnings` 提示快照中已删除的工具/知识库）。
+2. **知识库**：建库 → 上传文档 → `/knowledge-bases/{id}/search` 验证 → 绑定到 Agent → 对话时自动检索注入。
+3. **版本**：`POST /agents/{id}/versions` 发布；`POST .../versions/{n}/rollback` 软回滚（生成 "Rollback from vN" 新版本）。
+4. **评测**：建测试集 → 批量导 case（answer/tool/rag 三类）→ `POST /evaluation/runs`（校验 version 归属 agent）→ worker 串行执行 → `GET /runs/{id}` 看 stats、`/cases` 看明细、`POST /runs/{id}/rerun-failed` 续跑、`GET /compare` 版本对比。
+   - 评测 trace 独立：session_id 为 `eval_{run_id}_{case_id}`，metadata `source: "evaluation"`。
+
+## Docker 部署
 
 ```bash
-# 运行所有测试
-pytest tests/ -v
-
-# 运行测试并生成覆盖率报告
-pytest tests/ --cov=app --cov-report=html
+docker compose up -d db redis          # 基础设施
+docker compose run --rm app alembic upgrade head
+docker compose up -d app worker        # API + 评测 worker
 ```
 
-### 2. 测试覆盖范围
+## 测试
 
-当前测试覆盖以下核心接口：
+```bash
+pytest tests/ -v
+```
 
-| 测试函数 | 测试目标 |
-|----------|----------|
-| `test_root_endpoint` | 验证根接口返回项目信息 |
-| `test_health_endpoint` | 验证健康检查接口 |
-| `test_user_register_and_login` | 验证用户注册、登录、创建会话完整流程 |
+## 可观测性
 
-## 项目亮点 / 优化点
-
-### 1. 工程化架构
-
-- **分层清晰**：API 层 / 服务层 / 模型层分离，职责明确
-- **配置管理**：支持多环境配置（development/staging/production），环境变量统一管理
-- **容器化部署**：Docker + Docker Compose 一键部署，便于 CI/CD 集成
-
-### 2. 稳定性保障
-
-- **多模型降级**：LLM 服务支持自动重试和模型降级，提升可用性
-- **缓存降级**：Redis 不可用时自动降级到内存缓存，确保服务不中断
-- **接口限流**：基于 slowapi 实现接口级限流，防止恶意请求
-
-### 3. 安全性设计
-
-- **JWT 认证**：用户认证与会话管理分离，令牌自动过期
-- **输入清洗**：所有用户输入经过 sanitization 处理，防止注入攻击
-- **密码加密**：使用 bcrypt 加密存储，符合安全最佳实践
-
-### 4. 可观测性
-
-- **结构化日志**：基于 structlog 实现结构化日志，支持请求追踪
-- **健康检查**：提供 `/health` 接口，便于监控系统状态
-- **错误处理**：全局异常处理，返回友好错误信息
-
-## 项目总结
-
-本项目是一个生产级 AI 聊天后端服务，采用 FastAPI + LangGraph 技术栈，具备完整的用户认证、会话管理、长时记忆、工具调用等核心功能。项目遵循工程化规范，支持 Docker 容器化部署，具备良好的可扩展性和稳定性，适合作为实习项目展示或实际业务场景落地。
+- **Langfuse UI**：trace 树展示 `agent-run → retrieve_knowledge → knowledge_retriever`、
+  `chat → ChatOpenAI`、工具 span；评测 trace 用 `eval_` 会话前缀与 `source=evaluation` 区分。
+- **本地 metrics**：LLM/工具调用/向量检索延迟与状态落库，供管理端统计页消费。
+- 关闭 trace：`LANGFUSE_TRACING_ENABLED=false`（业务无感知）。

@@ -1,3 +1,6 @@
+# 固定 compose 项目名：目录重命名后仍复用既有容器与数据卷（zhuanyexiangmu-db-1 / *_postgres-data）
+name: zhuanyexiangmu
+
 # 定义所有服务列表
 services:
   # 项目服务
@@ -16,7 +19,7 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    command: python main.py
     restart: unless-stopped
     networks:
       - monitoring
@@ -57,6 +60,45 @@ services:
     networks:
       - monitoring
 
+  # Redis：评测任务队列（RQ）的消息中间件
+  redis:
+    image: docker.1ms.run/redis:7-alpine
+    platform: linux/amd64
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+    networks:
+      - monitoring
+
+  # 评测 worker：消费 RQ evaluations 队列，串行执行评测 case（Linux 容器内支持 fork）
+  worker:
+    build: .
+    container_name: ai_eval_worker
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - REDIS_URL=redis://redis:6379/0
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+    command: rq worker evaluations --url redis://redis:6379/0
+    restart: unless-stopped
+    networks:
+      - monitoring
+
 # 自定义docker网络配置
 networks:
   monitoring:
@@ -66,3 +108,4 @@ networks:
 # 声明数据卷，统一管理持久化存储目录
 volumes:
   postgres-data:
+  redis-data:

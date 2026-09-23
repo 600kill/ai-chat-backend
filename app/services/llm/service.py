@@ -139,6 +139,52 @@ class LLMService:
             )
             raise RuntimeError(f"llm call timed out after {settings.LLM_TOTAL_TIMEOUT}s total budget")
 
+    async def call_agent(
+        self,
+        messages: List[BaseMessage],
+        *,
+        model_name: Optional[str] = None,
+        tools: Optional[List] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> BaseMessage:
+        """按 Agent 配置发起一次工具型对话调用。
+
+        与默认路径的区别：每次构造**本地**模型实例并 bind 指定工具子集，
+        不修改全局 ``self._llm``，因此多个不同 Agent 并发调用互不影响；
+        同样享受重试与跨模型循环降级。
+
+        Args:
+            messages: 对话消息
+            model_name: 指定模型；None 时从注册表首选模型开始
+            tools: 该 Agent 绑定的工具子集；None/空表示不绑工具
+            temperature: Agent 配置的温度
+            max_tokens: Agent 配置的最大 token 数
+        """
+        model_kwargs: dict[str, Any] = {}
+        if temperature is not None:
+            model_kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            model_kwargs["max_tokens"] = max_tokens
+
+        try:
+            return await asyncio.wait_for(
+                self._call_with_fallback(
+                    messages,
+                    model_name,
+                    response_format=None,
+                    model_kwargs=model_kwargs,
+                    tools=tools or None,
+                ),
+                timeout=settings.LLM_TOTAL_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.exception(
+                "llm_total_timeout_exceeded",
+                timeout_seconds=settings.LLM_TOTAL_TIMEOUT,
+            )
+            raise RuntimeError(f"llm call timed out after {settings.LLM_TOTAL_TIMEOUT}s total budget")
+
     def get_llm(self) -> Any:
         """Return the current tool-bound default LLM instance.
 
@@ -168,7 +214,8 @@ class LLMService:
 
     @retry(
         stop=stop_after_attempt(settings.MAX_LLM_CALL_RETRIES),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
+        # 网关免费模型 429 频繁，退避窗口放宽到 4~20s
+        wait=wait_exponential(multiplier=2, min=4, max=20),
         retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIError)),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
@@ -240,6 +287,7 @@ class LLMService:
         model_name: Optional[str],
         response_format: Optional[Type[BaseModel]],
         model_kwargs: dict,
+        tools: Optional[List] = None,
     ) -> Union[BaseMessage, BaseModel]:
         """Build path-specific strategies and delegate to the shared fallback loop.
 
@@ -251,7 +299,7 @@ class LLMService:
             ``get_target`` returns ``self._llm`` (tool-bound).
             ``advance`` calls ``_switch_to_next_model`` so bindings persist.
         """
-        if model_name or response_format or model_kwargs:
+        if model_name or response_format or model_kwargs or tools:
             all_names = LLMRegistry.get_all_names()
             if model_name and model_name not in all_names:
                 logger.error("requested_model_not_found", model_name=model_name)
@@ -264,7 +312,11 @@ class LLMService:
 
             def get_target(idx: int) -> Any:
                 base = LLMRegistry.get(LLMRegistry.LLMS[idx]["name"], **model_kwargs)
-                return base.with_structured_output(response_format) if response_format else base
+                if response_format:
+                    return base.with_structured_output(response_format)
+                if tools:
+                    return base.bind_tools(tools)
+                return base
 
             def advance(idx: int) -> Optional[int]:
                 return (idx + 1) % total

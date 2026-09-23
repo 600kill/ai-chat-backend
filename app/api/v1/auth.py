@@ -373,13 +373,20 @@ async def get_user_sessions(user: User = Depends(get_current_user)):
 
 
 # ==================== 管理员 API ====================
+def _require_admin(user: User) -> None:
+    """校验当前用户为管理员，否则抛出 403。"""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可执行此操作")
+
+
 @router.get("/users")
-async def get_all_users():
+async def get_all_users(current_user: User = Depends(get_current_user)):
     """Get all users (Admin only).
 
     Returns:
         List of all users
     """
+    _require_admin(current_user)
     try:
         users = await db_service.get_all_users()
         return [
@@ -397,7 +404,7 @@ async def get_all_users():
 
 
 @router.delete("/users/{user_id}")
-async def delete_user(user_id: int):
+async def delete_user(user_id: int, current_user: User = Depends(get_current_user)):
     """Delete a user (Admin only).
 
     Args:
@@ -406,6 +413,7 @@ async def delete_user(user_id: int):
     Returns:
         dict: Success message
     """
+    _require_admin(current_user)
     try:
         await db_service.delete_user(user_id)
         return {"message": "User deleted successfully"}
@@ -418,12 +426,13 @@ async def delete_user(user_id: int):
 
 
 @router.get("/all-sessions")
-async def get_all_sessions():
+async def get_all_sessions(current_user: User = Depends(get_current_user)):
     """Get all sessions (Admin only).
 
     Returns:
         List of all sessions
     """
+    _require_admin(current_user)
     try:
         sessions = await db_service.get_all_sessions()
         return [
@@ -441,7 +450,10 @@ async def get_all_sessions():
 
 
 @router.delete("/admin/session/{session_id}")
-async def delete_session_admin(session_id: str):
+async def delete_session_admin(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+):
     """Delete a session as admin.
 
     Args:
@@ -450,6 +462,7 @@ async def delete_session_admin(session_id: str):
     Returns:
         dict: Success message
     """
+    _require_admin(current_user)
     try:
         sanitized_session_id = sanitize_string(session_id)
         await db_service.delete_session(sanitized_session_id)

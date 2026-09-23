@@ -148,7 +148,7 @@ class DatabaseService:
 
     def get_session_maker(self):
         """获取数据库会话构造器，用于手动创建会话"""
-        return Session(self.engine)
+        return lambda: Session(self.engine)
 
     async def health_check(self) -> bool:
         """数据库健康检查，测试连接是否正常"""
